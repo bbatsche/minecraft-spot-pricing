@@ -5,20 +5,20 @@ Parameters:
   ECSAMI:
     Description: AWS ECS AMI ID
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2/arm64/recommended/image_id
 
   ServerState:
     Type: String
     Description: "Running: A spot instance will launch shortly after setting this parameter; your Minecraft server should start within 5-10 minutes of changing this parameter (once UPDATE_IN_PROGRESS becomes UPDATE_COMPLETE). Stopped: Your spot instance (and thus Minecraft container) will be terminated shortly after setting this parameter."
     Default: Running
-    AllowedValues: 
+    AllowedValues:
     - Running
     - Stopped
 
   InstanceType:
     Type: String
     Description: "t3.medium is a good cost effective instance, 1 VCPU and 3.75 GB of RAM with moderate network performance. Change at your discretion. https://aws.amazon.com/ec2/instance-types/."
-    Default: t3.medium
+    Default: t4g.medium
 
   SpotPrice:
     Type: String
@@ -84,10 +84,27 @@ Parameters:
     Description: Server minecraft version
     Default: ''
 
-  Memory:
+  InitMemory:
     Type: String
-    Description: How much Memory to allocate for the JVM
+    Description: How much memory to initially allocate for the JVM
     Default: '1G'
+
+  MemSoftLimit:
+    Type: Number
+    Description: Container memory soft limit
+    Default: 3072
+    MinValue: 0
+
+  MaxMemory:
+    Type: String
+    Description: Maximum amount of memory JVM may allocate
+    Default: '3G'
+
+  MemHardLimit:
+    Type: Number
+    Description: Hard limit for container memory
+    Default: 4092
+    MinValue: 0
 
   Seed:
     Type: String
@@ -96,10 +113,14 @@ Parameters:
   MaxPlayers:
     Type: Number
     Description: Max number of players that can connect simultaneously (default 20)
+    Default: 20
+    MinValue: 0
 
   ViewDistance:
     Type: Number
     Description: Max view radius (in chunks) the server will send to the client (default 10)
+    Default: 10
+    MinValue: 0
 
   GameMode:
     Type: String
@@ -140,7 +161,7 @@ Parameters:
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
-      - Label: 
+      - Label:
           default: Essential Configuration
         Parameters:
         - ServerState
@@ -158,7 +179,10 @@ Metadata:
         - Difficulty
         - Whitelist
         - MinecraftVersion
-        - Memory
+        - InitMemory
+        - MaxMemory
+        - MemSoftLimit
+        - MemHardLimit
         - Seed
         - MaxPlayers
         - ViewDistance
@@ -166,13 +190,13 @@ Metadata:
         - LevelType
         - EnableRollingLogs
         - Timezone
-      - Label: 
+      - Label:
           default: Optional Remote Access (SSH) Configuration
         Parameters:
         - KeyPairName
         - YourIPv4
         - YourIPv6
-      - Label: 
+      - Label:
           default: Optional DNS Configuration
         Parameters:
         - HostedZoneId
@@ -206,8 +230,14 @@ Metadata:
         default: "If you have a hosted zone in Route 53 and wish to update a DNS record whenever your Minecraft instance starts, supply the hosted zone ID here."
       RecordName:
         default: "If you have a hosted zone in Route 53 and wish to set a DNS record whenever your Minecraft instance starts, supply a record name here (e.g. minecraft.mydomain.com)."
-      Memory:
-        default: "If you wish to increase the Java memory-heap limit of 1GB. Format: <size>[g|G|m|M|k|K]"
+      InitMemory:
+        default: "If you wish to adjust the initial Java memory-heap allocation of 1GB. Format: <size>[g|G|m|M|k|K]"
+      MaxMemory:
+        default: "If you wish to adjust the Java memory-heap limit of 3GB. Format: <size>[g|G|m|M|k|K]"
+      MemSoftLimit:
+        default: "Memory soft limit for the container in MiB"
+      MemHardLimit:
+        default: "Memory hard limit for the container in MiB"
       Seed:
         default: "Seed for world generation"
       MaxPlayers:
@@ -234,10 +264,9 @@ Conditions:
   IPv6AddressProvided: !Not [ !Equals [ !Ref YourIPv6, '' ] ]
   DnsConfigEnabled: !And [ !Not [ !Equals [ !Ref HostedZoneId, '' ] ], !Not [ !Equals [ !Ref RecordName, '' ] ] ]
   SpotPriceProvided: !Not [ !Equals [ !Ref SpotPrice, '' ] ]
-  MemoryProvided: !Not [ !Equals [ !Ref Memory, '' ] ]
+  InitMemoryProvided: !Not [ !Equals [ !Ref InitMemory, '' ] ]
+  MaxMemoryProvided: !Not [ !Equals [ !Ref MaxMemory, '' ] ]
   SeedProvided: !Not [ !Equals [ !Ref Seed, '' ] ]
-  MaxPlayersProvided: !Not [ !Equals [ !Ref MaxPlayers, '' ] ]
-  ViewDistanceProvided: !Not [ !Equals [ !Ref ViewDistance, '' ] ]
   GameModeProvided: !Not [ !Equals [ !Ref GameMode, '' ] ]
   LevelTypeProvided: !Not [ !Equals [ !Ref LevelType, '' ] ]
   EnableRollingLogsProvided: !Not [ !Equals [ !Ref EnableRollingLogs, '' ] ]
@@ -257,9 +286,9 @@ Resources:
   # BASIC VPC
   # ====================================================
 
-  Vpc: 
+  Vpc:
     Type: AWS::EC2::VPC
-    Properties: 
+    Properties:
       CidrBlock: 10.100.0.0/26
       EnableDnsSupport: true
       EnableDnsHostnames: true
@@ -267,31 +296,31 @@ Resources:
   SubnetA:
     Type: AWS::EC2::Subnet
     Properties:
-      AvailabilityZone: !Select 
+      AvailabilityZone: !Select
       - 0
-      - !GetAZs 
+      - !GetAZs
         Ref: 'AWS::Region'
       CidrBlock: !Select [ 0, !Cidr [ 10.100.0.0/26, 4, 4 ] ]
-      VpcId: !Ref Vpc  
+      VpcId: !Ref Vpc
 
   SubnetARoute:
     Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties: 
+    Properties:
       RouteTableId: !Ref RouteTable
       SubnetId: !Ref SubnetA
 
   SubnetBRoute:
     Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties: 
+    Properties:
       RouteTableId: !Ref RouteTable
-      SubnetId: !Ref SubnetB  
+      SubnetId: !Ref SubnetB
 
   SubnetB:
     Type: AWS::EC2::Subnet
     Properties:
-      AvailabilityZone: !Select 
+      AvailabilityZone: !Select
       - 1
-      - !GetAZs 
+      - !GetAZs
         Ref: 'AWS::Region'
       CidrBlock: !Select [ 1, !Cidr [ 10.100.0.0/26, 4, 4 ] ]
       VpcId: !Ref Vpc
@@ -302,18 +331,18 @@ Resources:
 
   InternetGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
-    Properties: 
+    Properties:
       InternetGatewayId: !Ref InternetGateway
       VpcId: !Ref Vpc
 
   RouteTable:
     Type: AWS::EC2::RouteTable
-    Properties: 
-      VpcId: !Ref Vpc    
+    Properties:
+      VpcId: !Ref Vpc
 
   Route:
     Type: AWS::EC2::Route
-    Properties: 
+    Properties:
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
       RouteTableId: !Ref RouteTable
@@ -344,7 +373,7 @@ Resources:
 
   EfsSg:
     Type: AWS::EC2::SecurityGroup
-    Properties: 
+    Properties:
       GroupName: !Sub "${AWS::StackName}-efs"
       GroupDescription: !Sub "${AWS::StackName}-efs"
       SecurityGroupIngress:
@@ -353,26 +382,26 @@ Resources:
         IpProtocol: tcp
         SourceSecurityGroupId: !Ref Ec2Sg
       VpcId: !Ref Vpc
-      
+
   # ====================================================
   # INSTANCE CONFIG
   # ====================================================
 
   Ec2Sg:
     Type: AWS::EC2::SecurityGroup
-    Properties: 
+    Properties:
       GroupName: !Sub "${AWS::StackName}-ec2"
       GroupDescription: !Sub "${AWS::StackName}-ec2"
       SecurityGroupIngress:
       - !If
-        - IPv4AddressProvided 
+        - IPv4AddressProvided
         - FromPort: 22
           ToPort: 22
           IpProtocol: tcp
           CidrIp: !Sub "${YourIPv4}/32"
         - !Ref 'AWS::NoValue'
       - !If
-        - IPv6AddressProvided 
+        - IPv6AddressProvided
         - FromPort: 22
           ToPort: 22
           IpProtocol: tcp
@@ -391,7 +420,7 @@ Resources:
       IamInstanceProfile: !Ref InstanceProfile
       ImageId: !Ref ECSAMI
       InstanceType: !Ref InstanceType
-      KeyName: 
+      KeyName:
         !If [ KeyPairNameProvided, !Ref KeyPairName, !Ref 'AWS::NoValue' ]
       SecurityGroups:
       - !Ref Ec2Sg
@@ -422,7 +451,7 @@ Resources:
 
   InstanceRole:
     Type: AWS::IAM::Role
-    Properties: 
+    Properties:
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -436,16 +465,16 @@ Resources:
         - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
       Policies:
         - PolicyName: root
-          PolicyDocument: 
+          PolicyDocument:
             Version: "2012-10-17"
-            Statement: 
+            Statement:
               - Effect: "Allow"
                 Action: "route53:*"
                 Resource: "*"
 
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
-    Properties: 
+    Properties:
       Roles:
         - !Ref InstanceRole
 
@@ -456,25 +485,26 @@ Resources:
 
   EcsService:
     Type: AWS::ECS::Service
-    Properties: 
+    Properties:
       Cluster: !Ref EcsCluster
       DesiredCount: !FindInMap [ ServerState, !Ref ServerState, DesiredCapacity ]
       ServiceName: !Sub "${AWS::StackName}-ecs-service"
-      TaskDefinition: !Ref EcsTask  
+      TaskDefinition: !Ref EcsTask
       DeploymentConfiguration:
         MaximumPercent: 100
         MinimumHealthyPercent: 0
 
   EcsTask:
     Type: AWS::ECS::TaskDefinition
-    Properties: 
+    Properties:
       Volumes:
       - Host:
           SourcePath: /opt/minecraft
         Name: minecraft
-      ContainerDefinitions:      
+      ContainerDefinitions:
         - Name: minecraft
-          MemoryReservation: 1024
+          MemoryReservation: !Sub "${MemSoftLimit}"
+          Memory: !Sub "${MemHardLimit}"
           Image: !Sub "itzg/minecraft-server:${MinecraftImageTag}"
           PortMappings:
           - ContainerPort: 25565
@@ -487,6 +517,10 @@ Resources:
           Environment:
             - Name: "EULA"
               Value: "TRUE"
+            - Name: "MAX_PLAYERS"
+              Value: !Sub "${MaxPlayers}"
+            - Name: "VIEW_DISTANCE"
+              Value: !Sub "${ViewDistance}"
             - !If
               - MinecraftTypeTagProvided
               - Name: "TYPE"
@@ -513,24 +547,19 @@ Resources:
                 Value: !Sub "${MinecraftVersion}"
               - !Ref 'AWS::NoValue'
             - !If
-              - MemoryProvided
-              - Name: "MEMORY"
-                Value: !Sub "${Memory}"
+              - InitMemoryProvided
+              - Name: "INIT_MEMORY"
+                Value: !Sub "${InitMemory}"
+              - !Ref 'AWS::NoValue'
+            - !If
+              - MaxMemoryProvided
+              - Name: "MAX_MEMORY"
+                Value: !Sub "${MaxMemory}"
               - !Ref 'AWS::NoValue'
             - !If
               - SeedProvided
               - Name: "SEED"
                 Value: !Sub "${Seed}"
-              - !Ref 'AWS::NoValue'
-            - !If
-              - MaxPlayersProvided
-              - Name: "MAX_PLAYERS"
-                Value: !Sub "${MaxPlayers}"
-              - !Ref 'AWS::NoValue'
-            - !If
-              - ViewDistanceProvided
-              - Name: "VIEW_DISTANCE"
-                Value: !Sub "${ViewDistance}"
               - !Ref 'AWS::NoValue'
             - !If
               - GameModeProvided
@@ -560,7 +589,7 @@ Resources:
   SetDNSRecordLambdaRole:
     Type: AWS::IAM::Role
     Condition: DnsConfigEnabled
-    Properties: 
+    Properties:
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -574,9 +603,9 @@ Resources:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
       Policies:
         - PolicyName: root
-          PolicyDocument: 
+          PolicyDocument:
             Version: "2012-10-17"
-            Statement: 
+            Statement:
               - Effect: "Allow"
                 Action: "route53:*"
                 Resource: "*"
@@ -587,7 +616,7 @@ Resources:
   SetDNSRecordLambda:
     Type: "AWS::Lambda::Function"
     Condition: DnsConfigEnabled
-    Properties: 
+    Properties:
       Environment:
         Variables:
           HostedZoneId: !Ref HostedZoneId
@@ -629,7 +658,7 @@ Resources:
   LaunchEvent:
     Type: AWS::Events::Rule
     Condition: DnsConfigEnabled
-    Properties: 
+    Properties:
       EventPattern:
         source:
         - aws.autoscaling
@@ -647,7 +676,7 @@ Resources:
   LaunchEventLambdaPermission:
     Type: AWS::Lambda::Permission
     Condition: DnsConfigEnabled
-    Properties: 
+    Properties:
       Action: lambda:InvokeFunction
       FunctionName: !GetAtt SetDNSRecordLambda.Arn
       Principal: events.amazonaws.com
