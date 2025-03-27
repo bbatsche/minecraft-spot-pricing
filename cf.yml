@@ -17,13 +17,44 @@ Parameters:
 
   InstanceType:
     Type: String
-    Description: "t3.medium is a good cost effective instance, 1 VCPU and 3.75 GB of RAM with moderate network performance. Change at your discretion. https://aws.amazon.com/ec2/instance-types/."
+    Description: "t4g.medium is a good cost-effective instance, 2 vCPUs and 3.75 GB of RAM with moderate network performance. Change at your discretion. https://aws.amazon.com/ec2/instance-types/."
     Default: t4g.medium
 
   SpotPrice:
     Type: String
-    Description: "A t3.medium shouldn't cost more than a cent per hour. Note: Leave this blank to use on-demand pricing."
+    Description: "A t3.medium shouldn't cost much more than a cent per hour. Note: Leave this blank to use on-demand pricing."
     Default: "0.05"
+
+  ContainerInsights:
+    Type: String
+    Description: "Enable/Disable ECS Container Insights for ECS Cluster"
+    Default: disabled
+    AllowedValues:
+    - enabled
+    - disabled
+
+  EntryPoint:
+    Type: CommaDelimitedList
+    Description: "Task entrypoint (Optional - image default is script /start)"
+
+  Command:
+    Type: CommaDelimitedList
+    Description: "Task command (Optional - image default is empty)"
+
+  LogGroupName:
+    Type: String
+    Description: (Optional - An empty value disables this feature)
+    Default: ''
+
+  LogGroupRetentionInDays:
+    Type: Number
+    Description: (Log retention in days)
+    Default: 7
+
+  LogStreamPrefix:
+    Type: String
+    Description: (Optional)
+    Default: 'minecraft-server'
 
   KeyPairName:
     Type: String
@@ -113,14 +144,12 @@ Parameters:
   MaxPlayers:
     Type: Number
     Description: Max number of players that can connect simultaneously (default 20)
-    Default: 20
-    MinValue: 0
+    Default: -1
 
   ViewDistance:
     Type: Number
     Description: Max view radius (in chunks) the server will send to the client (default 10)
-    Default: 10
-    MinValue: 0
+    Default: -1
 
   GameMode:
     Type: String
@@ -191,6 +220,15 @@ Metadata:
         - EnableRollingLogs
         - Timezone
       - Label:
+          default: Optional ECS Cluster and Task Configuration
+        Parameters:
+        - ContainerInsights
+        - EntryPoint
+        - Command
+        - LogGroupName
+        - LogGroupRetentionInDays
+        - LogStreamPrefix
+      - Label:
           default: Optional Remote Access (SSH) Configuration
         Parameters:
         - KeyPairName
@@ -220,6 +258,18 @@ Metadata:
         default: "A comma delimited list (no spaces) of player names"
       MinecraftVersion:
         default: "Minecraft version ie 1.16.3"
+      ContainerInsights:
+        default: "ECS Container Insights provide additional container metrics, and supports collection of Prometheus metrics.  Additional AWS charges may apply."
+      EntryPoint:
+        default: "Task/container --entrypoint, comma separated e.g. /bin/bash,-c"
+      Command:
+        default: "Task/container command, comma separated arguments passed to entrypoint"
+      LogGroupName:
+        default: "Create CloudWatch Log Group with this name e.g. /Minecraft or /ecs/minecraft, and direct container logs there"
+      LogGroupRetentionInDays:
+        default: "Number of days to retain CloudWatch logs"
+      LogStreamPrefix:
+        default: "Prefix for container log stream e.g. minecraft-server"
       KeyPairName:
         default: "If you wish to access the instance via SSH, select a Key Pair to use. https://console.aws.amazon.com/ec2/v2/home?#KeyPairs:sort=keyName"
       YourIPv4:
@@ -259,6 +309,10 @@ Conditions:
   DifficultyProvided: !Not [ !Equals [ !Ref Difficulty, '' ] ]
   WhitelistProvided: !Not [ !Equals [ !Ref Whitelist, '' ] ]
   MinecraftVersionProvided: !Not [ !Equals [ !Ref MinecraftVersion, '' ] ]
+  EntryPointProvided: !Not [ !Equals [ !Join [ "", !Ref EntryPoint ], '' ] ]
+  CommandProvided: !Not [ !Equals [ !Join [ "", !Ref Command ], '' ] ]
+  LogGroupNameProvided: !Not [ !Equals [ !Ref LogGroupName, '' ] ]
+  LogStreamPrefixProvided:  !Not [ !Equals [ !Ref LogStreamPrefix, '' ] ]
   KeyPairNameProvided: !Not [ !Equals [ !Ref KeyPairName, '' ] ]
   IPv4AddressProvided: !Not [ !Equals [ !Ref YourIPv4, '' ] ]
   IPv6AddressProvided: !Not [ !Equals [ !Ref YourIPv6, '' ] ]
@@ -267,6 +321,8 @@ Conditions:
   InitMemoryProvided: !Not [ !Equals [ !Ref InitMemory, '' ] ]
   MaxMemoryProvided: !Not [ !Equals [ !Ref MaxMemory, '' ] ]
   SeedProvided: !Not [ !Equals [ !Ref Seed, '' ] ]
+  MaxPlayersProvided: !Not [ !Equals [ !Ref MaxPlayers, -1 ] ]
+  ViewDistanceProvided: !Not [ !Equals [ !Ref ViewDistance, -1 ] ]
   GameModeProvided: !Not [ !Equals [ !Ref GameMode, '' ] ]
   LevelTypeProvided: !Not [ !Equals [ !Ref LevelType, '' ] ]
   EnableRollingLogsProvided: !Not [ !Equals [ !Ref EnableRollingLogs, '' ] ]
@@ -443,11 +499,14 @@ Resources:
       AutoScalingGroupName: !Sub "${AWS::StackName}-asg"
       DesiredCapacity: !FindInMap [ ServerState, !Ref ServerState, DesiredCapacity ]
       LaunchConfigurationName: !Ref LaunchConfiguration
-      MaxSize: !FindInMap [ ServerState, !Ref ServerState, DesiredCapacity ]
-      MinSize: !FindInMap [ ServerState, !Ref ServerState, DesiredCapacity ]
+      NewInstancesProtectedFromScaleIn: true
+      MaxSize: 1
+      MinSize: 0
       VPCZoneIdentifier:
         - !Ref SubnetA
         - !Ref SubnetB
+    Metadata:
+      LaunchEvent: !If [ DnsConfigEnabled, !GetAtt LaunchEvent.Arn, "" ]
 
   InstanceRole:
     Type: AWS::IAM::Role
@@ -463,14 +522,6 @@ Resources:
           - sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
-      Policies:
-        - PolicyName: root
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: "Allow"
-                Action: "route53:*"
-                Resource: "*"
 
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -482,6 +533,31 @@ Resources:
     Type: AWS::ECS::Cluster
     Properties:
       ClusterName: !Sub "${AWS::StackName}-cluster"
+      ClusterSettings:
+        - Name: containerInsights
+          Value: !Ref ContainerInsights
+
+  ECSCapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      AutoScalingGroupProvider:
+        AutoScalingGroupArn: !Ref AutoScalingGroup
+        ManagedScaling:
+          MaximumScalingStepSize: 1
+          MinimumScalingStepSize: 1
+          Status: ENABLED
+          TargetCapacity: 100
+        ManagedTerminationProtection: ENABLED
+
+  EcsClusterCapacityProviderAssociation:
+    Type: AWS::ECS::ClusterCapacityProviderAssociations
+    Properties:
+      Cluster: !Ref EcsCluster
+      CapacityProviders:
+        - !Ref ECSCapacityProvider
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: !Ref ECSCapacityProvider
+          Weight: 1
 
   EcsService:
     Type: AWS::ECS::Service
@@ -490,6 +566,10 @@ Resources:
       DesiredCount: !FindInMap [ ServerState, !Ref ServerState, DesiredCapacity ]
       ServiceName: !Sub "${AWS::StackName}-ecs-service"
       TaskDefinition: !Ref EcsTask
+      CapacityProviderStrategy:
+        - CapacityProvider: !Ref ECSCapacityProvider
+          Weight: 1
+          Base: 0
       DeploymentConfiguration:
         MaximumPercent: 100
         MinimumHealthyPercent: 0
@@ -501,15 +581,37 @@ Resources:
       - Host:
           SourcePath: /opt/minecraft
         Name: minecraft
+      NetworkMode: "bridge"
       ContainerDefinitions:
         - Name: minecraft
           MemoryReservation: !Sub "${MemSoftLimit}"
           Memory: !Sub "${MemHardLimit}"
           Image: !Sub "itzg/minecraft-server:${MinecraftImageTag}"
+          EntryPoint: !If
+              - EntryPointProvided
+              - !Ref EntryPoint
+              - !Ref 'AWS::NoValue'
+          Command: !If
+              - CommandProvided
+              - !Ref Command
+              - !Ref 'AWS::NoValue'
           PortMappings:
           - ContainerPort: 25565
             HostPort: 25565
             Protocol: tcp
+          LogConfiguration:
+            !If
+            - LogGroupNameProvided
+            - LogDriver: awslogs
+              Options:
+                awslogs-group: !Ref CloudWatchLogGroup
+                awslogs-stream-prefix: !If
+                - LogStreamPrefixProvided
+                - !Sub ${LogStreamPrefix}
+                - !Ref 'AWS::NoValue'
+                awslogs-region: !Ref AWS::Region
+                awslogs-create-group: true
+            - !Ref 'AWS::NoValue'
           MountPoints:
           - ContainerPath: /data
             SourceVolume: minecraft
@@ -582,6 +684,13 @@ Resources:
                 Value: !Sub "${Timezone}"
               - !Ref 'AWS::NoValue'
 
+  CloudWatchLogGroup:
+    Condition: LogGroupNameProvided
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "${LogGroupName}"
+      RetentionInDays: !Sub "${LogGroupRetentionInDays}"
+
   # ====================================================
   # SET DNS RECORD
   # ====================================================
@@ -607,8 +716,8 @@ Resources:
             Version: "2012-10-17"
             Statement:
               - Effect: "Allow"
-                Action: "route53:*"
-                Resource: "*"
+                Action: "route53:ChangeResourceRecordSets"
+                Resource: !Sub "arn:aws:route53:::hostedzone/${HostedZoneId}"
               - Effect: "Allow"
                 Action: "ec2:DescribeInstance*"
                 Resource: "*"
@@ -652,7 +761,7 @@ Resources:
       Handler: index.handler
       MemorySize: 128
       Role: !GetAtt SetDNSRecordLambdaRole.Arn
-      Runtime: python3.7
+      Runtime: python3.11
       Timeout: 20
 
   LaunchEvent:
@@ -666,7 +775,7 @@ Resources:
         - EC2 Instance Launch Successful
         detail:
           AutoScalingGroupName:
-          - !Ref AutoScalingGroup
+          - !Sub "${AWS::StackName}-asg"
       Name: !Sub "${AWS::StackName}-instance-launch"
       State: ENABLED
       Targets:
