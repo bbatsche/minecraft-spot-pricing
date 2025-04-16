@@ -187,6 +187,10 @@ Parameters:
     Type: String
     Description: "Change the server's timezone. Use the canonical name of the format: Area/Location (e.g. America/New_York)"
 
+  ModrinthMods:
+    Type: String
+    Description: Comma separated list of mods to download automatically from Modrinth (https://modrinth.com/)
+
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
@@ -219,6 +223,7 @@ Metadata:
         - LevelType
         - EnableRollingLogs
         - Timezone
+        - ModrinthMods
       - Label:
           default: Optional ECS Cluster and Task Configuration
         Parameters:
@@ -302,6 +307,8 @@ Metadata:
         default: "Whether to enable rolling logs"
       Timezone:
         default: "The server's timezone"
+      ModrinthMods:
+        default: Modrinth Mods
 
 Conditions:
   MinecraftTypeTagProvided: !Not [ !Equals [ !Ref MinecraftTypeTag, '' ] ]
@@ -327,7 +334,7 @@ Conditions:
   LevelTypeProvided: !Not [ !Equals [ !Ref LevelType, '' ] ]
   EnableRollingLogsProvided: !Not [ !Equals [ !Ref EnableRollingLogs, '' ] ]
   TimezoneProvided: !Not [ !Equals [ !Ref Timezone, '' ] ]
-
+  ModrinthModsProvided: !Not [ !Equals [ !Ref ModrinthMods, '' ] ]
 
 Mappings:
   ServerState:
@@ -682,6 +689,11 @@ Resources:
               - TimezoneProvided
               - Name: "TZ"
                 Value: !Sub "${Timezone}"
+              - !Ref 'AWS::NoValue'
+            - !If
+              - ModrinthModsProvided
+              - Name: MODRINTH_PROJECTS
+                Value: !Sub "${ModrinthMods}"
               - !Ref 'AWS::NoValue'
 
   CloudWatchLogGroup:
