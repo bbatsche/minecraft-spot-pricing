@@ -3,9 +3,9 @@ Description: Minecraft Spot Price Server via Docker / ECS
 Parameters:
 
   ECSAMI:
-    Description: AWS ECS AMI ID
+    Description: AMI ID to use for EC2
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/ecs/optimized-ami/amazon-linux-2/arm64/recommended/image_id
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id
 
   ServerState:
     Type: String
@@ -15,15 +15,33 @@ Parameters:
     - Running
     - Stopped
 
+  InstancePurchaseMode:
+    Type: String
+    Description: "Spot: Much cheaper, but your instance might restart during gameplay. On Demand: Instance will be created in on-demand mode. More expensive, but your gameplay is unlikely to be interrupted by the server going down."
+    Default: Spot
+    AllowedValues:
+    - On Demand
+    - Spot
+
   InstanceType:
     Type: String
-    Description: "t4g.medium is a good cost-effective instance, 2 vCPUs and 3.75 GB of RAM with moderate network performance. Change at your discretion. https://aws.amazon.com/ec2/instance-types/."
+    Description: "t4g.medium is a good cost-effective instance, 2 vCPUs and 3.75 GB of RAM with moderate network performance. https://aws.amazon.com/ec2/instance-types/. (Required for on-demand pricing)"
     Default: t4g.medium
 
   SpotPrice:
     Type: String
-    Description: "A t3.medium shouldn't cost much more than a cent per hour. Note: Leave this blank to use on-demand pricing."
+    Description: Max cents/hr to pay for a spot instance (ignored for on-demand pricing)
     Default: "0.05"
+
+  SpotMinMemoryMiB:
+    Type: Number
+    Description: Minimum desired memory for your instance (required for spot pricing)
+    Default: 3072
+
+  SpotMinVCpuCount:
+    Type: Number
+    Description: Minimum desired VCPUs for your instance (required for spot pricing)
+    Default: 1
 
   ContainerInsights:
     Type: String
@@ -57,16 +75,6 @@ Parameters:
     Default: 'minecraft-server'
 
   KeyPairName:
-    Type: String
-    Description: (Optional - An empty value disables this feature)
-    Default: ''
-
-  YourIPv4:
-    Type: String
-    Description: (Optional - An empty value disables this feature)
-    Default: ''
-
-  YourIPv6:
     Type: String
     Description: (Optional - An empty value disables this feature)
     Default: ''
@@ -120,22 +128,10 @@ Parameters:
     Description: How much memory to initially allocate for the JVM
     Default: '1G'
 
-  MemSoftLimit:
-    Type: Number
-    Description: Container memory soft limit
-    Default: 3072
-    MinValue: 0
-
   MaxMemory:
     Type: String
     Description: Maximum amount of memory JVM may allocate
     Default: '3G'
-
-  MemHardLimit:
-    Type: Number
-    Description: Hard limit for container memory
-    Default: 4092
-    MinValue: 0
 
   Seed:
     Type: String
@@ -143,17 +139,17 @@ Parameters:
 
   MaxPlayers:
     Type: Number
-    Description: Max number of players that can connect simultaneously (default 20)
+    Description: Max number of players that can connect simultaneously
     Default: -1
 
   ViewDistance:
     Type: Number
-    Description: Max view radius (in chunks) the server will send to the client (default 10)
+    Description: Max view radius (in chunks) the server will send to the client
     Default: -1
 
   GameMode:
     Type: String
-    Description: "Options: creative, survival (default), adventure, spectator (v1.8+)"
+    Description: "Options: creative, survival, adventure, spectator (v1.8+)"
     Default: survival
     AllowedValues:
     - creative
@@ -191,70 +187,91 @@ Parameters:
     Type: String
     Description: Comma separated list of mods to download automatically from Modrinth (https://modrinth.com/)
 
+  EfsBackupPolicy:
+    Type: String
+    Description: Backup policy for EFS storage. Will create additional costs if enabled
+    Default: DISABLED
+    AllowedValues:
+      - ENABLED
+      - DISABLED
+
+  MemoryReservation:
+    Type: Number
+    Description: Minimum memory reserved by the container. Default (1024) should be sufficient
+    Default: 1024
+
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
       - Label:
           default: Essential Configuration
         Parameters:
-        - ServerState
-        - InstanceType
-        - SpotPrice
+          - ServerState
+          - ECSAMI
+
       - Label:
-          default: Server Settings
+          default: Instance Settings
         Parameters:
-        - MinecraftImageTag
+          - InstancePurchaseMode
+          - InstanceType
+          - SpotPrice
+          - SpotMinMemoryMiB
+          - SpotMinVCpuCount
+          - KeyPairName
+
       - Label:
-          default: Optional Server Settings
+          default: Minecract Server Settings
         Parameters:
-        - MinecraftTypeTag
-        - AdminPlayerNames
-        - Difficulty
-        - Whitelist
-        - MinecraftVersion
-        - InitMemory
-        - MaxMemory
-        - MemSoftLimit
-        - MemHardLimit
-        - Seed
-        - MaxPlayers
-        - ViewDistance
-        - GameMode
-        - LevelType
-        - EnableRollingLogs
-        - Timezone
-        - ModrinthMods
+          - MinecraftImageTag
+          - MinecraftTypeTag
+          - MinecraftVersion
+          - AdminPlayerNames
+          - Timezone
+          - MemoryReservation
+
       - Label:
-          default: Optional ECS Cluster and Task Configuration
+          default: Optional Server Parameters
         Parameters:
-        - ContainerInsights
-        - EntryPoint
-        - Command
-        - LogGroupName
-        - LogGroupRetentionInDays
-        - LogStreamPrefix
+          - Difficulty
+          - Whitelist
+          - Seed
+          - MaxPlayers
+          - ViewDistance
+          - GameMode
+          - LevelType
+          - InitMemory
+          - MaxMemory
+          - EnableRollingLogs
+          - ModrinthMods
+
       - Label:
-          default: Optional Remote Access (SSH) Configuration
+          default: Additional ECS Cluster and Task Configuration
         Parameters:
-        - KeyPairName
-        - YourIPv4
-        - YourIPv6
+          - ContainerInsights
+          - EntryPoint
+          - Command
+          - LogGroupName
+          - LogGroupRetentionInDays
+          - LogStreamPrefix
+          - EfsBackupPolicy
+
       - Label:
           default: Optional DNS Configuration
         Parameters:
-        - HostedZoneId
-        - RecordName
+          - HostedZoneId
+          - RecordName
+
     ParameterLabels:
       ServerState:
         default: "Update this parameter to shut down / start up your Minecraft server as required to save on cost. Takes a few minutes to take effect."
       InstanceType:
-        default: "Which instance type? You must make sure this is available in your region! https://aws.amazon.com/ec2/pricing/on-demand/"
+        default: "Instance type. Make sure this is available in your region! https://aws.amazon.com/ec2/pricing/on-demand/"
       SpotPrice:
-        default: "Maximum spot price per hour? Leave blank to disable spot pricing."
+        default: "Maximum spot price per hour"
       MinecraftImageTag:
-        default: "Which version of Minecraft do you want to launch?"
+        default: Docker container version
       MinecraftTypeTag:
-        default: "Which type of Minecraft do you want to launch?"
+        default: Minecraft server type
       AdminPlayerNames:
         default: "A comma delimited list (no spaces) of player names to be admins"
       Difficulty:
@@ -277,10 +294,6 @@ Metadata:
         default: "Prefix for container log stream e.g. minecraft-server"
       KeyPairName:
         default: "If you wish to access the instance via SSH, select a Key Pair to use. https://console.aws.amazon.com/ec2/v2/home?#KeyPairs:sort=keyName"
-      YourIPv4:
-        default: "If you wish to access the instance via SSH and using IPv4, provide it."
-      YourIPv6:
-        default: "If you wish to access the instance via SSH and using IPv6, provide it."
       HostedZoneId:
         default: "If you have a hosted zone in Route 53 and wish to update a DNS record whenever your Minecraft instance starts, supply the hosted zone ID here."
       RecordName:
@@ -289,10 +302,6 @@ Metadata:
         default: "If you wish to adjust the initial Java memory-heap allocation of 1GB. Format: <size>[g|G|m|M|k|K]"
       MaxMemory:
         default: "If you wish to adjust the Java memory-heap limit of 3GB. Format: <size>[g|G|m|M|k|K]"
-      MemSoftLimit:
-        default: "Memory soft limit for the container in MiB"
-      MemHardLimit:
-        default: "Memory hard limit for the container in MiB"
       Seed:
         default: "Seed for world generation"
       MaxPlayers:
@@ -309,6 +318,18 @@ Metadata:
         default: "The server's timezone"
       ModrinthMods:
         default: Modrinth Mods
+      InstancePurchaseMode:
+        default: Spot or on-demand instance type
+      SpotMinMemoryMiB:
+        default: Minimum required memory (MB)
+      SpotMinVCpuCount:
+        default: Minium required number of vCPUs
+      EfsBackupPolicy:
+        default: EFS backup policy
+      ECSAMI:
+        default: AWS ECS AMI ID
+      MemoryReservation:
+        default: Container's initial memory reservation
 
 Conditions:
   MinecraftTypeTagProvided: !Not [ !Equals [ !Ref MinecraftTypeTag, '' ] ]
@@ -321,10 +342,7 @@ Conditions:
   LogGroupNameProvided: !Not [ !Equals [ !Ref LogGroupName, '' ] ]
   LogStreamPrefixProvided:  !Not [ !Equals [ !Ref LogStreamPrefix, '' ] ]
   KeyPairNameProvided: !Not [ !Equals [ !Ref KeyPairName, '' ] ]
-  IPv4AddressProvided: !Not [ !Equals [ !Ref YourIPv4, '' ] ]
-  IPv6AddressProvided: !Not [ !Equals [ !Ref YourIPv6, '' ] ]
   DnsConfigEnabled: !And [ !Not [ !Equals [ !Ref HostedZoneId, '' ] ], !Not [ !Equals [ !Ref RecordName, '' ] ] ]
-  SpotPriceProvided: !Not [ !Equals [ !Ref SpotPrice, '' ] ]
   InitMemoryProvided: !Not [ !Equals [ !Ref InitMemory, '' ] ]
   MaxMemoryProvided: !Not [ !Equals [ !Ref MaxMemory, '' ] ]
   SeedProvided: !Not [ !Equals [ !Ref Seed, '' ] ]
@@ -335,6 +353,7 @@ Conditions:
   EnableRollingLogsProvided: !Not [ !Equals [ !Ref EnableRollingLogs, '' ] ]
   TimezoneProvided: !Not [ !Equals [ !Ref Timezone, '' ] ]
   ModrinthModsProvided: !Not [ !Equals [ !Ref ModrinthMods, '' ] ]
+  UsingSpotInstance: !Equals [ !Ref InstancePurchaseMode, 'Spot' ]
 
 Mappings:
   ServerState:
@@ -365,6 +384,18 @@ Resources:
         Ref: 'AWS::Region'
       CidrBlock: !Select [ 0, !Cidr [ 10.100.0.0/26, 4, 4 ] ]
       VpcId: !Ref Vpc
+      MapPublicIpOnLaunch: true
+
+  SubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select
+      - 1
+      - !GetAZs
+        Ref: 'AWS::Region'
+      CidrBlock: !Select [ 1, !Cidr [ 10.100.0.0/26, 4, 4 ] ]
+      VpcId: !Ref Vpc
+      MapPublicIpOnLaunch: true
 
   SubnetARoute:
     Type: AWS::EC2::SubnetRouteTableAssociation
@@ -377,16 +408,6 @@ Resources:
     Properties:
       RouteTableId: !Ref RouteTable
       SubnetId: !Ref SubnetB
-
-  SubnetB:
-    Type: AWS::EC2::Subnet
-    Properties:
-      AvailabilityZone: !Select
-      - 1
-      - !GetAZs
-        Ref: 'AWS::Region'
-      CidrBlock: !Select [ 1, !Cidr [ 10.100.0.0/26, 4, 4 ] ]
-      VpcId: !Ref Vpc
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
@@ -416,7 +437,14 @@ Resources:
 
   Efs:
     Type: AWS::EFS::FileSystem
-    Properties: {}
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BackupPolicy:
+        Status: !Ref EfsBackupPolicy
+      LifecyclePolicies:
+        - TransitionToIA: AFTER_7_DAYS
+        - TransitionToPrimaryStorageClass: AFTER_1_ACCESS
 
   MountA:
     Type: AWS::EFS::MountTarget
@@ -457,18 +485,11 @@ Resources:
       GroupDescription: !Sub "${AWS::StackName}-ec2"
       SecurityGroupIngress:
       - !If
-        - IPv4AddressProvided
+        - KeyPairNameProvided
         - FromPort: 22
           ToPort: 22
           IpProtocol: tcp
-          CidrIp: !Sub "${YourIPv4}/32"
-        - !Ref 'AWS::NoValue'
-      - !If
-        - IPv6AddressProvided
-        - FromPort: 22
-          ToPort: 22
-          IpProtocol: tcp
-          CidrIpv6: !Sub "${YourIPv6}/128"
+          CidrIp: 0.0.0.0/0
         - !Ref 'AWS::NoValue'
       - FromPort: 25565
         ToPort: 25565
@@ -476,37 +497,52 @@ Resources:
         CidrIp: 0.0.0.0/0
       VpcId: !Ref Vpc
 
-  LaunchConfiguration:
-    Type: AWS::AutoScaling::LaunchConfiguration
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
     Properties:
-      AssociatePublicIpAddress: true
-      IamInstanceProfile: !Ref InstanceProfile
-      ImageId: !Ref ECSAMI
-      InstanceType: !Ref InstanceType
-      KeyName:
-        !If [ KeyPairNameProvided, !Ref KeyPairName, !Ref 'AWS::NoValue' ]
-      SecurityGroups:
-      - !Ref Ec2Sg
-      SpotPrice: !If [ SpotPriceProvided, !Ref SpotPrice, !Ref 'AWS::NoValue' ]
-      UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash -xe
-          echo ECS_CLUSTER=${EcsCluster} >> /etc/ecs/ecs.config
-          yum install -y amazon-efs-utils
-          mkdir /opt/minecraft
-          mount -t efs ${Efs}:/ /opt/minecraft
-          chown 845:845 /opt/minecraft
+      LaunchTemplateName: !Sub ${AWS::StackName}-launch-template
+      LaunchTemplateData:
+        ImageId: !Ref ECSAMI
+        InstanceType:
+          !If [ UsingSpotInstance, !Ref AWS::NoValue, !Ref InstanceType ]
+        InstanceRequirements:
+          !If
+            - UsingSpotInstance
+            - MemoryMiB:
+                Min: !Ref SpotMinMemoryMiB
+              VCpuCount:
+                Min: !Ref SpotMinVCpuCount
+            - !Ref AWS::NoValue
+        IamInstanceProfile:
+          Name: !Ref InstanceProfile
+        KeyName:
+          !If [ KeyPairNameProvided, !Ref KeyPairName, !Ref 'AWS::NoValue' ]
+        NetworkInterfaces:
+          - AssociatePublicIpAddress: true
+            DeleteOnTermination: true
+            DeviceIndex: 0
+            Groups:
+              - !Ref Ec2Sg
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash -xe
+            echo ECS_CLUSTER=${EcsCluster} >> /etc/ecs/ecs.config
 
   AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
-    DependsOn:
-    - MountA
-    - MountB
     Properties:
       AutoScalingGroupName: !Sub "${AWS::StackName}-asg"
       DesiredCapacity: !FindInMap [ ServerState, !Ref ServerState, DesiredCapacity ]
-      LaunchConfigurationName: !Ref LaunchConfiguration
-      NewInstancesProtectedFromScaleIn: true
+      MixedInstancesPolicy:
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !Ref LaunchTemplate
+            Version: !GetAtt LaunchTemplate.LatestVersionNumber
+        InstancesDistribution:
+          OnDemandPercentageAboveBaseCapacity:
+            !If [ UsingSpotInstance, 0, 100 ]
+          SpotAllocationStrategy: lowest-price
+          SpotMaxPrice: !If [ UsingSpotInstance, !Ref SpotPrice, !Ref AWS::NoValue ]
       MaxSize: 1
       MinSize: 0
       VPCZoneIdentifier:
@@ -583,16 +619,19 @@ Resources:
 
   EcsTask:
     Type: AWS::ECS::TaskDefinition
+    DependsOn:
+      - MountA
+      - MountB
     Properties:
       Volumes:
-      - Host:
-          SourcePath: /opt/minecraft
-        Name: minecraft
+      - Name: minecraft
+        EFSVolumeConfiguration:
+          FilesystemId: !Ref Efs
+          TransitEncryption: ENABLED
       NetworkMode: "bridge"
       ContainerDefinitions:
         - Name: minecraft
-          MemoryReservation: !Sub "${MemSoftLimit}"
-          Memory: !Sub "${MemHardLimit}"
+          MemoryReservation: !Ref MemoryReservation
           Image: !Sub "itzg/minecraft-server:${MinecraftImageTag}"
           EntryPoint: !If
               - EntryPointProvided
@@ -626,10 +665,16 @@ Resources:
           Environment:
             - Name: "EULA"
               Value: "TRUE"
-            - Name: "MAX_PLAYERS"
-              Value: !Sub "${MaxPlayers}"
-            - Name: "VIEW_DISTANCE"
-              Value: !Sub "${ViewDistance}"
+            - !If
+              - MaxPlayersProvided
+              - Name: "MAX_PLAYERS"
+                Value: !Sub "${MaxPlayers}"
+              - !Ref AWS::NoValue
+            - !If
+              - ViewDistanceProvided
+              - Name: "VIEW_DISTANCE"
+                Value: !Sub "${ViewDistance}"
+              - !Ref AWS::NoValue
             - !If
               - MinecraftTypeTagProvided
               - Name: "TYPE"
