@@ -30,7 +30,7 @@ Parameters:
 
   SpotPrice:
     Type: String
-    Description: Max cents/hr to pay for a spot instance (ignored for on-demand pricing)
+    Description: Maximum cents/hr to pay for a spot instance (ignored for on-demand pricing)
     Default: "0.05"
 
   SpotMinMemoryMiB:
@@ -91,12 +91,25 @@ Parameters:
 
   MinecraftImageTag:
     Type: String
-    Description: "Java version (Examples include latest, adopt13, openj9, etc) Refer to tag descriptions available here: https://github.com/itzg/docker-minecraft-server)"
+    Description: "Container & Java version. Suggested values are 'latest' or 'stable' but more examples and documentation can be found here: https://docker-minecraft-server.readthedocs.io/en/latest/versions/java/"
     Default: 'latest'
 
   MinecraftTypeTag:
     Type: String
-    Description: "(Examples include SPIGOT, BUKKIT, TUINITY, etc) Refer to tag descriptions available here: https://github.com/itzg/docker-minecraft-server)"
+    Description: "Whether to run a third party Minecraft server or VANILLA. Not all of these options have been tested and some may require additional parameters not yet supported by this template. See more details in the documentation here: https://docker-minecraft-server.readthedocs.io/en/latest/types-and-platforms/"
+    Default: VANILLA
+    AllowedValues:
+      - VANILLA
+      - FABRIC
+      - FORGE
+      - KETTING
+      - MOHIST
+      - SPONGEVANILLA
+      - LIMBO
+      - PAPER
+      - PUFFERFISH
+      - PURPUR
+      - QUILT
 
   AdminPlayerNames:
     Type: String
@@ -159,17 +172,14 @@ Parameters:
 
   LevelType:
     Type: String
-    Description: "Options: DEFAULT, FLAT, LARGEBIOMES, AMPLIFIED, CUSTOMIZED, BUFFET, BIOMESOP (v1.12-), BIOMESOPLENTY (v1.15+)"
-    Default: DEFAULT
+    Description: Level type used when generating a new world
+    Default: default
     AllowedValues:
-    - DEFAULT
-    - FLAT
-    - LARGEBIOMES
-    - AMPLIFIED
-    - CUSTOMIZED
-    - BUFFET
-    - BIOMESOP
-    - BIOMESOPLENTY
+      - default
+      - flat
+      - large_biomes
+      - amplified
+      - single_biome_surface
 
   EnableRollingLogs:
     Type: String
@@ -197,8 +207,25 @@ Parameters:
 
   MemoryReservation:
     Type: Number
-    Description: Minimum memory reserved by the container. Default (1024) should be sufficient
+    Description: Initial memory reservation and soft limit for container in MiB
     Default: 1024
+
+  SshIpv4:
+    Type: String
+    Description: Optionally limit SSH access to a single IP address for added security
+
+  Motd:
+    Type: String
+    Description: Message to display in the server listing
+
+  LevelName:
+    Type: String
+    Description: Can be used to quickly switch or generate new worlds in your server
+    Default: world
+
+  ServerName:
+    Type: String
+    Description: Name used to identify your server
 
 Metadata:
   AWS::CloudFormation::Interface:
@@ -218,6 +245,7 @@ Metadata:
           - SpotMinMemoryMiB
           - SpotMinVCpuCount
           - KeyPairName
+          - SshIpv4
 
       - Label:
           default: Minecract Server Settings
@@ -232,13 +260,16 @@ Metadata:
       - Label:
           default: Optional Server Parameters
         Parameters:
-          - Difficulty
-          - Whitelist
-          - Seed
           - MaxPlayers
-          - ViewDistance
-          - GameMode
+          - Whitelist
+          - Difficulty
+          - Seed
           - LevelType
+          - GameMode
+          - ServerName
+          - Motd
+          - LevelName
+          - ViewDistance
           - InitMemory
           - MaxMemory
           - EnableRollingLogs
@@ -275,7 +306,7 @@ Metadata:
       AdminPlayerNames:
         default: "A comma delimited list (no spaces) of player names to be admins"
       Difficulty:
-        default: "Which difficulty?"
+        default: Difficulty for new worlds
       Whitelist:
         default: "A comma delimited list (no spaces) of player names"
       MinecraftVersion:
@@ -319,7 +350,7 @@ Metadata:
       ModrinthMods:
         default: Modrinth Mods
       InstancePurchaseMode:
-        default: Spot or on-demand instance type
+        default: Spot or on-demand pricing
       SpotMinMemoryMiB:
         default: Minimum required memory (MB)
       SpotMinVCpuCount:
@@ -330,6 +361,14 @@ Metadata:
         default: AWS ECS AMI ID
       MemoryReservation:
         default: Container's initial memory reservation
+      SshIpv4:
+        default: Your external IP address
+      Motd:
+        default: Message of the Day
+      LevelName:
+        default: Level name
+      ServerName:
+        default: Server name
 
 Conditions:
   MinecraftTypeTagProvided: !Not [ !Equals [ !Ref MinecraftTypeTag, '' ] ]
@@ -354,6 +393,9 @@ Conditions:
   TimezoneProvided: !Not [ !Equals [ !Ref Timezone, '' ] ]
   ModrinthModsProvided: !Not [ !Equals [ !Ref ModrinthMods, '' ] ]
   UsingSpotInstance: !Equals [ !Ref InstancePurchaseMode, 'Spot' ]
+  Ipv4Provided: !Not [ !Equals [ !Ref SshIpv4, '' ] ]
+  MotdProvided: !Not [ !Equals [ !Ref Motd, ''] ]
+  ServerNameProvided: !Not [ !Equals [ !Ref ServerName, ''] ]
 
 Mappings:
   ServerState:
@@ -374,6 +416,9 @@ Resources:
       CidrBlock: 10.100.0.0/26
       EnableDnsSupport: true
       EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-VPC"
 
   SubnetA:
     Type: AWS::EC2::Subnet
@@ -385,6 +430,9 @@ Resources:
       CidrBlock: !Select [ 0, !Cidr [ 10.100.0.0/26, 4, 4 ] ]
       VpcId: !Ref Vpc
       MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Subnet-A"
 
   SubnetB:
     Type: AWS::EC2::Subnet
@@ -396,6 +444,9 @@ Resources:
       CidrBlock: !Select [ 1, !Cidr [ 10.100.0.0/26, 4, 4 ] ]
       VpcId: !Ref Vpc
       MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-Subnet-B"
 
   SubnetARoute:
     Type: AWS::EC2::SubnetRouteTableAssociation
@@ -411,7 +462,10 @@ Resources:
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
-    Properties: {}
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-IGW"
 
   InternetGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
@@ -423,6 +477,9 @@ Resources:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-RT"
 
   Route:
     Type: AWS::EC2::Route
@@ -440,11 +497,17 @@ Resources:
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
+      Encrypted: true
+      ThroughputMode: elastic
       BackupPolicy:
         Status: !Ref EfsBackupPolicy
       LifecyclePolicies:
         - TransitionToIA: AFTER_7_DAYS
+        - TransitionToArchive: AFTER_30_DAYS
         - TransitionToPrimaryStorageClass: AFTER_1_ACCESS
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-EFS"
 
   MountA:
     Type: AWS::EFS::MountTarget
@@ -465,14 +528,17 @@ Resources:
   EfsSg:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupName: !Sub "${AWS::StackName}-efs"
-      GroupDescription: !Sub "${AWS::StackName}-efs"
+      GroupName: !Sub "${AWS::StackName}-EFS"
+      GroupDescription: !Sub "${AWS::StackName} EFS access from EC2 instance"
       SecurityGroupIngress:
       - FromPort: 2049
         ToPort: 2049
         IpProtocol: tcp
         SourceSecurityGroupId: !Ref Ec2Sg
       VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-EFS-SG"
 
   # ====================================================
   # INSTANCE CONFIG
@@ -481,26 +547,29 @@ Resources:
   Ec2Sg:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupName: !Sub "${AWS::StackName}-ec2"
-      GroupDescription: !Sub "${AWS::StackName}-ec2"
+      GroupName: !Sub "${AWS::StackName}-EC2"
+      GroupDescription: !Sub "${AWS::StackName} Access to EC2 instance"
       SecurityGroupIngress:
       - !If
         - KeyPairNameProvided
         - FromPort: 22
           ToPort: 22
           IpProtocol: tcp
-          CidrIp: 0.0.0.0/0
+          CidrIp: !If [ Ipv4Provided, !Sub "${SshIpv4}/32", 0.0.0.0/0 ]
         - !Ref 'AWS::NoValue'
       - FromPort: 25565
         ToPort: 25565
         IpProtocol: tcp
         CidrIp: 0.0.0.0/0
       VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-EC2-SG"
 
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
-      LaunchTemplateName: !Sub ${AWS::StackName}-launch-template
+      LaunchTemplateName: !Sub ${AWS::StackName}-Launch-Template
       LaunchTemplateData:
         ImageId: !Ref ECSAMI
         InstanceType:
@@ -527,12 +596,18 @@ Resources:
           Fn::Base64: !Sub |
             #!/bin/bash -xe
             echo ECS_CLUSTER=${EcsCluster} >> /etc/ecs/ecs.config
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub "${AWS::StackName}-EC2"
 
   AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
-      AutoScalingGroupName: !Sub "${AWS::StackName}-asg"
+      AutoScalingGroupName: !Sub "${AWS::StackName}-ASG"
       DesiredCapacity: !FindInMap [ ServerState, !Ref ServerState, DesiredCapacity ]
+      NewInstancesProtectedFromScaleIn: true
       MixedInstancesPolicy:
         LaunchTemplate:
           LaunchTemplateSpecification:
@@ -554,6 +629,7 @@ Resources:
   InstanceRole:
     Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub "${AWS::StackName}-${AWS::Region}-InstanceRole"
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -575,7 +651,7 @@ Resources:
   EcsCluster:
     Type: AWS::ECS::Cluster
     Properties:
-      ClusterName: !Sub "${AWS::StackName}-cluster"
+      ClusterName: !Sub "${AWS::StackName}-Cluster"
       ClusterSettings:
         - Name: containerInsights
           Value: !Ref ContainerInsights
@@ -583,6 +659,7 @@ Resources:
   ECSCapacityProvider:
     Type: AWS::ECS::CapacityProvider
     Properties:
+      Name: !Sub "${AWS::StackName}-CapacityProvider"
       AutoScalingGroupProvider:
         AutoScalingGroupArn: !Ref AutoScalingGroup
         ManagedScaling:
@@ -607,7 +684,7 @@ Resources:
     Properties:
       Cluster: !Ref EcsCluster
       DesiredCount: !FindInMap [ ServerState, !Ref ServerState, DesiredCapacity ]
-      ServiceName: !Sub "${AWS::StackName}-ecs-service"
+      ServiceName: !Sub "${AWS::StackName}-ECS-Service"
       TaskDefinition: !Ref EcsTask
       CapacityProviderStrategy:
         - CapacityProvider: !Ref ECSCapacityProvider
@@ -629,6 +706,9 @@ Resources:
           FilesystemId: !Ref Efs
           TransitEncryption: ENABLED
       NetworkMode: "bridge"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-ECS-Task"
       ContainerDefinitions:
         - Name: minecraft
           MemoryReservation: !Ref MemoryReservation
@@ -665,6 +745,8 @@ Resources:
           Environment:
             - Name: "EULA"
               Value: "TRUE"
+            - Name: LEVEL
+              Value: !Ref LevelName
             - !If
               - MaxPlayersProvided
               - Name: "MAX_PLAYERS"
@@ -740,6 +822,16 @@ Resources:
               - Name: MODRINTH_PROJECTS
                 Value: !Sub "${ModrinthMods}"
               - !Ref 'AWS::NoValue'
+            - !If
+              - MotdProvided
+              - Name: MOTD
+                Value: !Ref Motd
+              - !Ref AWS::NoValue
+            - !If
+              - ServerNameProvided
+              - Name: SERVER_NAME
+                Value: !Ref ServerName
+              - !Ref AWS::NoValue
 
   CloudWatchLogGroup:
     Condition: LogGroupNameProvided
@@ -756,6 +848,7 @@ Resources:
     Type: AWS::IAM::Role
     Condition: DnsConfigEnabled
     Properties:
+      RoleName: !Sub "${AWS::StackName}-${AWS::Region}-Lambda-R53-Role"
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -814,7 +907,7 @@ Resources:
                   ]
               })
       Description: Sets Route 53 DNS Record for Minecraft
-      FunctionName: !Sub "${AWS::StackName}-set-dns"
+      FunctionName: !Sub "${AWS::StackName}-Update-DNS"
       Handler: index.handler
       MemorySize: 128
       Role: !GetAtt SetDNSRecordLambdaRole.Arn
@@ -832,12 +925,12 @@ Resources:
         - EC2 Instance Launch Successful
         detail:
           AutoScalingGroupName:
-          - !Sub "${AWS::StackName}-asg"
-      Name: !Sub "${AWS::StackName}-instance-launch"
+          - !Sub "${AWS::StackName}-ASG"
+      Name: !Sub "${AWS::StackName}-Instance-Launch"
       State: ENABLED
       Targets:
         - Arn: !GetAtt SetDNSRecordLambda.Arn
-          Id: !Sub "${AWS::StackName}-set-dns"
+          Id: !Sub "${AWS::StackName}-Update-DNS"
 
   LaunchEventLambdaPermission:
     Type: AWS::Lambda::Permission
