@@ -51,14 +51,6 @@ Parameters:
     - enabled
     - disabled
 
-  EntryPoint:
-    Type: CommaDelimitedList
-    Description: "Task entrypoint (Optional - image default is script /start)"
-
-  Command:
-    Type: CommaDelimitedList
-    Description: "Task command (Optional - image default is empty)"
-
   LogGroupName:
     Type: String
     Description: (Optional - An empty value disables this feature)
@@ -195,7 +187,7 @@ Parameters:
 
   ModrinthMods:
     Type: String
-    Description: Comma separated list of mods to download automatically from Modrinth (https://modrinth.com/)
+    Description: "Comma separated list of mods to download automatically from Modrinth (https://modrinth.com/). See documentation here: https://docker-minecraft-server.readthedocs.io/en/latest/mods-and-plugins/modrinth/"
 
   EfsBackupPolicy:
     Type: String
@@ -279,8 +271,6 @@ Metadata:
           default: Additional ECS Cluster and Task Configuration
         Parameters:
           - ContainerInsights
-          - EntryPoint
-          - Command
           - LogGroupName
           - LogGroupRetentionInDays
           - LogStreamPrefix
@@ -313,10 +303,6 @@ Metadata:
         default: "Minecraft version ie 1.16.3"
       ContainerInsights:
         default: "ECS Container Insights provide additional container metrics, and supports collection of Prometheus metrics.  Additional AWS charges may apply."
-      EntryPoint:
-        default: "Task/container --entrypoint, comma separated e.g. /bin/bash,-c"
-      Command:
-        default: "Task/container command, comma separated arguments passed to entrypoint"
       LogGroupName:
         default: "Create CloudWatch Log Group with this name e.g. /Minecraft or /ecs/minecraft, and direct container logs there"
       LogGroupRetentionInDays:
@@ -376,8 +362,6 @@ Conditions:
   DifficultyProvided: !Not [ !Equals [ !Ref Difficulty, '' ] ]
   WhitelistProvided: !Not [ !Equals [ !Ref Whitelist, '' ] ]
   MinecraftVersionProvided: !Not [ !Equals [ !Ref MinecraftVersion, '' ] ]
-  EntryPointProvided: !Not [ !Equals [ !Join [ "", !Ref EntryPoint ], '' ] ]
-  CommandProvided: !Not [ !Equals [ !Join [ "", !Ref Command ], '' ] ]
   LogGroupNameProvided: !Not [ !Equals [ !Ref LogGroupName, '' ] ]
   LogStreamPrefixProvided:  !Not [ !Equals [ !Ref LogStreamPrefix, '' ] ]
   KeyPairNameProvided: !Not [ !Equals [ !Ref KeyPairName, '' ] ]
@@ -713,14 +697,6 @@ Resources:
         - Name: minecraft
           MemoryReservation: !Ref MemoryReservation
           Image: !Sub "itzg/minecraft-server:${MinecraftImageTag}"
-          EntryPoint: !If
-              - EntryPointProvided
-              - !Ref EntryPoint
-              - !Ref 'AWS::NoValue'
-          Command: !If
-              - CommandProvided
-              - !Ref Command
-              - !Ref 'AWS::NoValue'
           PortMappings:
           - ContainerPort: 25565
             HostPort: 25565
@@ -822,6 +798,11 @@ Resources:
               - Name: MODRINTH_PROJECTS
                 Value: !Sub "${ModrinthMods}"
               - !Ref 'AWS::NoValue'
+            - !If
+              - ModrinthModsProvided
+              - Name: MODRINTH_DOWNLOAD_DEPENDENCIES
+                Value: required
+              - !Ref AWS::NoValue
             - !If
               - MotdProvided
               - Name: MOTD
